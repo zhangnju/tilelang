@@ -13,6 +13,9 @@ def _has_sm100():
         import torch
     except ImportError:
         return False
+    # ROCm exposes torch.cuda but does not support sm_100a TMA gather/scatter.
+    if torch.version.hip is not None:
+        return False
     if not torch.cuda.is_available():
         return False
     major, _ = torch.cuda.get_device_capability(0)
