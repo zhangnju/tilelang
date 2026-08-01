@@ -198,6 +198,10 @@ private:
                  iv->thread_tag == "threadIdx.z") {
         threadIdx_z_ext = op->value;
       }
+    } else if (op->attr_key == tl::attr::kWavesPerEU) {
+      if (const IntImmNode *v = op->value.as<IntImmNode>()) {
+        waves_per_eu = v->value;
+      }
     }
     StmtVisitor::VisitStmt_(op);
   }
@@ -206,6 +210,7 @@ public:
   PrimExpr threadIdx_x_ext = Integer(1);
   PrimExpr threadIdx_y_ext = Integer(1);
   PrimExpr threadIdx_z_ext = Integer(1);
+  int64_t waves_per_eu = 0; // 0 = unset (omit 2nd __launch_bounds__ arg)
 };
 
 void CodeGenTileLangHIP::PrintExtraAttrs(const PrimFunc &f, std::ostream &os) {
@@ -227,7 +232,14 @@ void CodeGenTileLangHIP::PrintExtraAttrs(const PrimFunc &f, std::ostream &os) {
     // shuffle operations when combined with #pragma unroll.  Only emit
     // launch_bounds when we have at least a full wavefront.
     if (threadIdx_ext_int->value >= 64) {
-      stream << " __launch_bounds__(" << threadIdx_ext_int->value << ")";
+      stream << " __launch_bounds__(" << threadIdx_ext_int->value;
+      // Optional 2nd arg: min wavefronts per EU (maps to amdgpu-waves-per-eu).
+      // Only emitted when the kernel carries a tl.waves_per_eu annotation, so
+      // default codegen is unchanged.
+      if (extractor.waves_per_eu > 0) {
+        stream << ", " << extractor.waves_per_eu;
+      }
+      stream << ")";
     }
   }
 }

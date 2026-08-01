@@ -57,6 +57,13 @@ static constexpr const char *kNonRestrictParams = "tl.non_restrict_params";
 // argument of __launch_bounds__(maxThreads, minBlocksPerMultiprocessor).
 // Type: Integer
 static constexpr const char *kMinBlocksPerSM = "tl.min_blocks_per_sm";
+// A PrimFunc-level attribute carrying the minimum number of wavefronts per
+// execution unit (AMD/ROCm occupancy hint).  When present it is emitted as the
+// second argument of HIP's __launch_bounds__(maxThreads, minWarpsPerEU), which
+// maps to the LLVM amdgpu-waves-per-eu attribute and drives the AMDGPU register
+// allocator's VGPR budget / target occupancy.
+// Type: Integer
+static constexpr const char *kWavesPerEU = "tl.waves_per_eu";
 // lexical_alloc_scope may first appear as a Block annotation, requesting that
 // LowerOpaqueBlock materialize a lexical scope boundary for that block subtree.
 // After LowerOpaqueBlock, the same key appears as an AttrStmt marker that

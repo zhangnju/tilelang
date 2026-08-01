@@ -15,6 +15,7 @@ __all__ = [
     "annotate_l2_hit_ratio",
     "annotate_restrict_buffers",
     "annotate_min_blocks_per_sm",
+    "annotate_waves_per_eu",
 ]
 
 
@@ -79,6 +80,28 @@ def annotate_min_blocks_per_sm(n: int):
     """
     assert isinstance(n, int) and n > 0, "n must be a positive integer"
     return attr(None, "tl.min_blocks_per_sm", n)
+
+
+def annotate_waves_per_eu(n: int):
+    """Annotate the minimum number of wavefronts per execution unit (AMD/ROCm).
+
+    When set, this value is emitted as the second argument of HIP's
+    ``__launch_bounds__(maxThreadsPerBlock, minWarpsPerEU)`` in the generated
+    kernel, which maps to the LLVM ``amdgpu-waves-per-eu`` attribute. A larger
+    value hands the AMDGPU register allocator a tighter VGPR budget so that more
+    wavefronts can reside per EU, raising occupancy at the cost of potential
+    register spilling. No-op on non-ROCm targets.
+
+    Example
+    -------
+    >>> @T.prim_func
+    ... def my_kernel(...):
+    ...     with T.Kernel(...):
+    ...         T.annotate_waves_per_eu(4)
+    ...         ...
+    """
+    assert isinstance(n, int) and n > 0, "n must be a positive integer"
+    return attr(None, "tl.waves_per_eu", n)
 
 
 def annotate_restrict_buffers(*buffers):

@@ -5,7 +5,11 @@ from __future__ import annotations
 from tilelang.language.common import *  # noqa: F401,F403
 from tilelang.language.common import __all__ as _COMMON_ALL
 from tilelang.language.allocate import alloc_cluster_barrier, alloc_descriptor, alloc_tmem  # noqa: F401
-from tilelang.language.annotations import annotate_l2_hit_ratio, annotate_min_blocks_per_sm  # noqa: F401
+from tilelang.language.annotations import (  # noqa: F401
+    annotate_l2_hit_ratio,
+    annotate_min_blocks_per_sm,
+    annotate_waves_per_eu,
+)
 from tilelang.language.builtin import (  # noqa: F401
     annotate_consumer_reg_alloc,
     annotate_producer_reg_dealloc,
@@ -70,6 +74,7 @@ _CUDA_API_ALL = (
     "annotate_consumer_reg_alloc",
     "annotate_l2_hit_ratio",
     "annotate_min_blocks_per_sm",
+    "annotate_waves_per_eu",
     "annotate_producer_reg_dealloc",
     "copy_cluster",
     "create_tma_descriptor",
