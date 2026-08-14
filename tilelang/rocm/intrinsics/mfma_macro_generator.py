@@ -28,6 +28,10 @@ from .mfma_layout import (
     shared_16x64_to_local_64x16_layout_B,
     shared_32x32_to_local_64x16_layout_A,
     shared_32x32_to_local_64x16_layout_B,
+    shared_32x16_to_local_64x8_layout_A,
+    shared_32x16_to_local_64x8_layout_B,
+    thread_id_shared_access_64x8_to_32x16_layout_A,
+    thread_id_shared_access_64x8_to_32x16_layout_B,
     thread_id_shared_access_64x1_to_16x4_layout_A,
     thread_id_shared_access_64x1_to_4x16_layout_B,
     thread_id_shared_access_64x4_to_16x16_layout_A,
@@ -195,8 +199,11 @@ class MatrixCoreIntrinEmitter:
             self.mfma_suffix = f"{out_dtype_abbrv}_{M_DIM}x{N_DIM}x{k_dim}_i8"
         elif in_dtype_abbrv == "bf16":
             # HIP intrinsic uses ...x{K}bf16_1k without an underscore before bf16
-            if k_dim == 32:
-                # GFX950: __builtin_amdgcn_mfma_f32_16x16x32_bf16
+            # on CDNA2/3 (16x16x16). The newer gfx950 instructions (16x16x32 and
+            # 32x32x16) use the underscore form ...x{K}_bf16.
+            if k_dim == 32 or M_DIM == 32:
+                # GFX950: __builtin_amdgcn_mfma_f32_16x16x32_bf16 /
+                #         __builtin_amdgcn_mfma_f32_32x32x16_bf16
                 self.mfma_suffix = f"{out_dtype_abbrv}_{M_DIM}x{N_DIM}x{k_dim}_bf16"
             else:
                 # CDNA2/3: __builtin_amdgcn_mfma_f32_16x16x16bf16_1k
@@ -305,6 +312,23 @@ class MatrixCoreIntrinEmitter:
         # For 32x32 MFMA, the A/B layouts have tile dim 32 on the MN side.
         # The maps are symmetric: A[row=M, col=K] and B[row=K, col=N] use the
         # same underlying 32xK↔64×local layout, just with axes swapped for transpose.
+        if k_dim == 16:
+            # k_dim=16 (bf16/f16 32x32x16) → shared_32x16_to_local_64x8
+            if not is_b:
+                if transposed:
+                    index_map = shared_32x16_to_local_64x8_layout_B
+                    reverse_index_map = thread_id_shared_access_64x8_to_32x16_layout_B
+                else:
+                    index_map = shared_32x16_to_local_64x8_layout_A
+                    reverse_index_map = thread_id_shared_access_64x8_to_32x16_layout_A
+            else:
+                if transposed:
+                    index_map = shared_32x16_to_local_64x8_layout_A
+                    reverse_index_map = thread_id_shared_access_64x8_to_32x16_layout_A
+                else:
+                    index_map = shared_32x16_to_local_64x8_layout_B
+                    reverse_index_map = thread_id_shared_access_64x8_to_32x16_layout_B
+            return index_map, reverse_index_map
         if k_dim != 32:
             raise ValueError(f"32x32 MFMA with effective k_dim={k_dim} is not supported yet; only k_dim=32 (k_dim*k_pack) is implemented.")
         # k_dim=32 → shared_32x32_to_local_64x16
@@ -329,9 +353,15 @@ class MatrixCoreIntrinEmitter:
     def get_store_index_map(self, inverse: bool = False) -> IndexMap:
         warp_size, local_size_c = self.WARP_SIZE, self.local_size_out
         if self.M_DIM == 32:
-            from .utils import mfma_store_index_map_32x32
+            if self.k_dim == 16:
+                # bf16/f16 32x32x16 outputs C N-major (different from i8 32x32x32).
+                from .utils import mfma_store_index_map_32x32_bf16
 
-            map_func = mfma_store_index_map_32x32
+                map_func = mfma_store_index_map_32x32_bf16
+            else:
+                from .utils import mfma_store_index_map_32x32
+
+                map_func = mfma_store_index_map_32x32
         else:
             map_func = mfma_store_index_map
         index_map = IndexMap.from_func(map_func, index_dtype=T.int32)
@@ -648,12 +678,17 @@ class MatrixCoreIntrinEmitter:
         mn_dim = self.M_DIM  # M_DIM == N_DIM for all supported shapes
 
         if mn_dim == 32:
-            if k_dim != 32:
+            if k_dim == 16:
+                # bf16/f16 32x32x16
+                transform_func_sr_a = shared_32x16_to_local_64x8_layout_A
+                transform_func_sr_b = shared_32x16_to_local_64x8_layout_A
+            elif k_dim == 32:
+                transform_func_sr_a = shared_32x32_to_local_64x16_layout_A
+                transform_func_sr_b = shared_32x32_to_local_64x16_layout_A
+            else:
                 raise ValueError(
-                    f"make_mfma_load_layout: 32x32 MFMA with effective k_dim={k_dim} is not supported; only k_dim=32 is implemented."
+                    f"make_mfma_load_layout: 32x32 MFMA with effective k_dim={k_dim} is not supported; only k_dim=16/32 is implemented."
                 )
-            transform_func_sr_a = shared_32x32_to_local_64x16_layout_A
-            transform_func_sr_b = shared_32x32_to_local_64x16_layout_A
         elif k_dim == 4:
             transform_func_sr_a = shared_16x4_to_local_64x1_layout_A
             transform_func_sr_b = shared_16x4_to_local_64x1_layout_A

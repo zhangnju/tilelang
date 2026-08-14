@@ -183,6 +183,67 @@ def thread_id_shared_access_64x16_to_32x32_layout_B(thread_id, local_id):
     return i, j
 
 
+# ---------------------------------------------------------------------------
+# v_mfma_f32_32x32x16_bf16 (gfx950): 32x32 MN tile, K=16, wave-64.
+# Each lane holds 8 bf16 A/B operands (bhalf8) and 16 fp32 C outputs (float16v).
+# Layout empirically verified bit-exact vs a torch reference GEMM:
+#   A[m,k]: lane = m,       reg = k, with lane = m + 32*(k//8), local = k%8
+#   B[k,n]: lane = n,       reg = k, with lane = n + 32*(k//8), local = k%8
+#   C[m,n]: N-major output — lane = n%32 (+32*?), m from reg.
+#           lane = n + 32*((m//4)%2 ... ) — see _C below. This is the transpose
+#           of the i8 32x32x32 C layout (that one is M-major); the bf16 32x32x16
+#           instruction outputs C with the N dimension on the lane axis.
+# ---------------------------------------------------------------------------
+def shared_32x16_to_local_64x8_layout_A(i, j):
+    # A[m=i, k=j], k in [0,16)
+    thread_id = i + 32 * (j // 8)
+    local_id = j % 8
+    return thread_id, local_id
+
+
+def thread_id_shared_access_64x8_to_32x16_layout_A(thread_id, local_id):
+    i = thread_id % 32
+    j = (thread_id // 32) * 8 + local_id
+    return i, j
+
+
+def shared_32x16_to_local_64x8_layout_B(i, j):
+    # B[k=i, n=j], k in [0,16)
+    thread_id = j + 32 * (i // 8)
+    local_id = i % 8
+    return thread_id, local_id
+
+
+def thread_id_shared_access_64x8_to_32x16_layout_B(thread_id, local_id):
+    i = (thread_id // 32) * 8 + local_id
+    j = thread_id % 32
+    return i, j
+
+
+def thread_id_shared_access_64x16_to_32x32_bf16_layout_C_m_n(thread_id, local_id):
+    """C output layout for v_mfma_f32_32x32x16_bf16 (N-major).
+
+    Verified bit-exact: lane holds N = thread_id % 32; the M row is
+    m = (thread_id // 32) * 4 + (local_id % 4) + (local_id // 4) * 8.
+
+    The hardware output is N-major (lane axis carries N), so to place each
+    register at its logical C[m, n] the store map must report (row, col) =
+    (m, n) with n on the lane axis. Returns (m, n).
+    """
+    n = thread_id % 32
+    m = (thread_id // 32) * 4 + local_id % 4 + (local_id // 4) * 8
+    return m, n
+
+
+def shared_32x32_to_local_64x16_bf16_layout_C(i, j):
+    # inverse: i=M_row, j=N_col -> (thread_id, local_id)
+    tid_high = (i // 4) % 2
+    thread_id = j + 32 * tid_high
+    mm = i - 4 * tid_high
+    local_id = (mm // 8) * 4 + mm % 4
+    return thread_id, local_id
+
+
 def make_mfma_swizzle_layout(shared_buf, vecSize=8):
     dtype = shared_buf.dtype
     shape = shared_buf.shape

@@ -52,6 +52,7 @@ class GemmMFMA(GemmBase):
             chunk=self.chunk,
             k_pack=self.k_pack,
             target=target,
+            mfma_shape=self.mfma_shape,
         )
 
         if self.is_gemm_ss():
@@ -109,6 +110,7 @@ class GemmMFMA(GemmBase):
             thread_var=thread_index,
             k_pack=self.k_pack,
             target=target,
+            mfma_shape=self.mfma_shape,
         )
         mfma_emitter.use_ds_read_tr_b = self._ds_read_tr_b_eligible(target)
 

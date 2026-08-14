@@ -177,6 +177,22 @@ class GemmBase:
         return int(val) != 0
 
     @property
+    def mfma_shape(self) -> tuple[int, int, int] | None:
+        """ROCm/gfx950 opt-in: force a specific MFMA instruction shape
+        ``(M_DIM, N_DIM, k_dim)`` for this gemm instead of the dtype-default
+        16x16. E.g. ``(32, 32, 16)`` selects v_mfma_f32_32x32x16_bf16, which
+        issues 4x fewer MFMA ops per tile — a large win for latency-bound
+        serial GEMMs (the KDA state-scan). Passed via annotation ``mfma_shape``
+        as a 3-int sequence."""
+        ann = getattr(self.gemm_node, "annotations", None)
+        if ann is None:
+            return None
+        val = ann.get("mfma_shape")
+        if val is None:
+            return None
+        return tuple(int(x) for x in val)
+
+    @property
     def policy(self) -> GemmWarpPolicy:
         return getattr(self.gemm_node, "policy", None)
 
