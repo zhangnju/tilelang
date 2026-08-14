@@ -415,6 +415,61 @@ def dec_max_nreg(reg_count: int):
     return set_max_nreg(reg_count, 0)
 
 
+def sched_barrier(mask: int = 0):
+    """AMD/ROCm instruction-scheduling barrier hint.
+
+    Lowers to ``__builtin_amdgcn_sched_barrier(mask)``. Constrains which
+    instruction classes the LLVM scheduler may move across this point; ``mask=0``
+    is a full scheduling barrier. Used to pin a memory/compute interleave that
+    the post-RA scheduler would otherwise undo. No-op on non-ROCm targets.
+
+    Args:
+        mask: int
+            The SchedGroupMask bitmask (0 = full barrier).
+    """
+    return evaluate(tirx.call_intrin("handle", tirx.op.Op.get("tl.sched_barrier"), mask))
+
+
+def sched_group_barrier(mask: int, size: int, sync_id: int = 0):
+    """AMD/ROCm instruction-scheduling group barrier.
+
+    Lowers to ``__builtin_amdgcn_sched_group_barrier(mask, size, sync_id)``.
+    Unlike :func:`sched_barrier` (a hard reorder fence), this creates an
+    explicit scheduling group of ``size`` instructions of the class selected by
+    ``mask`` (the SchedGroupMask bits). Consecutive groups sharing ``sync_id``
+    are kept in issue order, letting a kernel pin an "N MFMA / M memory"
+    interleave the post-RA scheduler would otherwise undo — the mechanism
+    Triton's AMD backend uses for MFMA/memory ping-pong. No-op on non-ROCm
+    targets.
+
+    Args:
+        mask: int
+            The SchedGroupMask bitmask selecting the instruction class
+            (e.g. MFMA, DS read/write, VMEM).
+        size: int
+            The number of instructions of that class to place in this group.
+        sync_id: int
+            Groups sharing this id are ordered relative to one another.
+    """
+    return evaluate(
+        tirx.call_intrin("handle", tirx.op.Op.get("tl.sched_group_barrier"), mask, size,
+                         sync_id))
+
+
+def set_prio(prio: int):
+    """AMD/ROCm wavefront priority hint.
+
+    Lowers to ``__builtin_amdgcn_s_setprio(prio)`` (prio in ``[0, 3]``). Raises or
+    lowers the issuing wavefront's hardware priority, used in pingpong scheduling
+    so a compute wave can preempt a memory wave. No-op on non-ROCm targets.
+
+    Args:
+        prio: int
+            The hardware priority level in [0, 3].
+    """
+    return evaluate(tirx.call_intrin("handle", tirx.op.Op.get("tl.set_prio"), prio))
+
+
 def annotate_producer_reg_dealloc(reg_count: int = 24):
     """Annotate the producer reg dealloc."""
     return tirx.call_intrin(

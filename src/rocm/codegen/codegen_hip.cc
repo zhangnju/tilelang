@@ -1603,6 +1603,24 @@ void CodeGenTileLangHIP::VisitExpr_(const CallNode *op, std::ostream &os) {
     // HIP doesn't need explicit register management like CUDA
     // This is a no-op for HIP
     return;
+  } else if (op->op.same_as(tl::sched_barrier())) {
+    int mask = Downcast<IntImm>(op->args[0])->value;
+    this->PrintIndent();
+    this->stream << "__builtin_amdgcn_sched_barrier(" << mask << ");\n";
+    return;
+  } else if (op->op.same_as(tl::sched_group_barrier())) {
+    int mask = Downcast<IntImm>(op->args[0])->value;
+    int size = Downcast<IntImm>(op->args[1])->value;
+    int sync_id = Downcast<IntImm>(op->args[2])->value;
+    this->PrintIndent();
+    this->stream << "__builtin_amdgcn_sched_group_barrier(" << mask << ", "
+                 << size << ", " << sync_id << ");\n";
+    return;
+  } else if (op->op.same_as(tl::set_prio())) {
+    int prio = Downcast<IntImm>(op->args[0])->value;
+    this->PrintIndent();
+    this->stream << "__builtin_amdgcn_s_setprio(" << prio << ");\n";
+    return;
   } else if (op->op.same_as(tl::annotate_producer_reg_dealloc()) ||
              op->op.same_as(tl::annotate_consumer_reg_alloc())) {
     return;

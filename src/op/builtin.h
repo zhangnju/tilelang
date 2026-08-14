@@ -624,6 +624,45 @@ TVM_DLL const Op &annotate_consumer_reg_alloc();
 TVM_DLL const Op &no_set_max_nreg();
 
 /*!
+ * \brief AMD instruction-scheduling barrier hint (ROCm only).
+ *
+ * sched_barrier(mask)
+ *
+ * Lowers to __builtin_amdgcn_sched_barrier(mask). The mask constrains which
+ * instruction classes the LLVM scheduler may move across this point (0 = a
+ * full scheduling barrier). Used to pin a memory/compute interleave the
+ * post-RA scheduler would otherwise undo. No-op on non-ROCm targets.
+ */
+TVM_DLL const Op &sched_barrier();
+
+/*!
+ * \brief AMD instruction-scheduling group barrier (ROCm only).
+ *
+ * sched_group_barrier(mask, size, sync_id)
+ *
+ * Lowers to __builtin_amdgcn_sched_group_barrier(mask, size, sync_id). Unlike
+ * the plain sched_barrier (a hard reorder fence), this creates an explicit
+ * scheduling group of `size` instructions whose class is selected by `mask`
+ * (the SchedGroupMask bits: e.g. MFMA, DS read/write, VMEM). Consecutive
+ * groups sharing a `sync_id` are kept in issue order, letting a kernel pin an
+ * "N MFMA / M memory" interleave the post-RA scheduler would otherwise undo —
+ * the mechanism Triton's AMD backend uses for MFMA/memory ping-pong. No-op on
+ * non-ROCm targets.
+ */
+TVM_DLL const Op &sched_group_barrier();
+
+/*!
+ * \brief AMD wavefront priority hint (ROCm only).
+ *
+ * set_prio(n)
+ *
+ * Lowers to __builtin_amdgcn_s_setprio(n) (n in [0,3]). Raises/lowers the
+ * issuing wavefront's hardware priority, used in pingpong scheduling so the
+ * compute wave preempts the memory wave. No-op on non-ROCm targets.
+ */
+TVM_DLL const Op &set_prio();
+
+/*!
  * \brief Arrive at a warpgroup fence for WGMMA sequences
  *
  * warpgroup_arrive()
