@@ -963,6 +963,18 @@ TVM_DLL const Op &shfl_sync();
 TVM_DLL const Op &shfl_xor_sync();
 
 /*!
+ * \brief AMD/ROCm cross-lane gather (ROCm only). Reads `value` from lane
+ * `src_lane` through the LDS crossbar with NO __syncthreads barrier.
+ *
+ * T ds_bpermute(value, src_lane)
+ *
+ * Lowers to __builtin_amdgcn_ds_bpermute(src_lane*4, value) with the required
+ * int<->float bitcasts. Used for register-resident fragment relayout on the
+ * latency-bound serial scan. No-op on non-ROCm targets.
+ */
+TVM_DLL const Op &ds_bpermute();
+
+/*!
  * \brief Warp shuffle (shift-down variant). Lowers to `__shfl_down_sync` on
  * CUDA and `__shfl_down` on HIP.
  *

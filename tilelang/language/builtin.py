@@ -992,6 +992,18 @@ def shfl_xor(
     return tirx.call_intrin(value.dtype, tirx.op.Op.get("tl.shfl_xor_sync"), _as_uint32_mask(mask), value, delta, width)
 
 
+def ds_bpermute(value, src_lane):
+    """ROCm/gfx950 cross-lane gather: read ``value`` from lane ``src_lane`` via
+    the LDS crossbar with NO __syncthreads barrier. Used for register-resident
+    fragment relayout on the latency-bound serial scan. fp32 value.
+
+    Args:
+        value: the per-lane fp32 value to gather from.
+        src_lane: the lane index to read from (int/PrimExpr).
+    """
+    return tirx.call_intrin("float32", tirx.op.Op.get("tl.ds_bpermute"), value, src_lane)
+
+
 def shfl_down(
     value: int | PrimExpr | tirx.Call,
     delta: int | PrimExpr | tirx.Call,

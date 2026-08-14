@@ -329,6 +329,15 @@ template <typename T> TL_DEVICE T shfl(T val, int srcLane) {
   return __shfl(val, srcLane);
 }
 
+// Cross-lane gather via the LDS crossbar, NO __syncthreads barrier.
+// Returns `val` from lane `srcLane`. Byte-addressed (srcLane*4). Used for the
+// register-resident fragment relayout on the latency-bound serial scan.
+TL_DEVICE float ds_bpermute_f32(float val, int srcLane) {
+  int r = __builtin_amdgcn_ds_bpermute(srcLane << 2,
+                                       __builtin_bit_cast(int, val));
+  return __builtin_bit_cast(float, r);
+}
+
 // specialize half_t
 template <> TL_DEVICE half_t shfl_xor(half_t val, int delta) {
   float f = static_cast<float>(val);

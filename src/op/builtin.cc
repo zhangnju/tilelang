@@ -553,6 +553,16 @@ TIR_DEFINE_TL_BUILTIN(shfl_xor_sync)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque));
 
+// AMD/ROCm cross-lane gather: ds_bpermute(value, src_lane). Reads `value` from
+// lane `src_lane` (byte address = src_lane*4) via the LDS crossbar WITHOUT a
+// __syncthreads barrier. Used by the register-resident fragment relayout to
+// move a GEMM C-accumulator into the next GEMM's B-operand lane layout, on the
+// latency-bound serial state-scan. No-op / falls back on non-ROCm targets.
+TIR_DEFINE_TL_BUILTIN(ds_bpermute)
+    .set_num_inputs(2)
+    .set_attr<TCallEffectKind>("TCallEffectKind",
+                               Integer(CallEffectKind::kOpaque));
+
 TIR_DEFINE_TL_BUILTIN(shfl_down_sync)
     .set_num_inputs(4)
     .set_attr<TCallEffectKind>("TCallEffectKind",
