@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tilelang.language.builtin import ds_read_tr16_b64, ds_read_tr8_b64
+from tilelang.language.builtin import ds_read_tr16_b64, ds_read_tr16_b64_to, ds_read_tr8_b64
 from tilelang.rocm.intrinsics import (
     MatrixCoreIntrinEmitter,
     MatrixCorePreshuffleIntrinEmitter,
@@ -25,6 +25,7 @@ __all__ = [
     "MatrixCorePreshuffleIntrinEmitter",
     "WMMAIntrinEmitter",
     "ds_read_tr16_b64",
+    "ds_read_tr16_b64_to",
     "ds_read_tr8_b64",
     "get_mma_micro_size",
     "make_mfma_swizzle_layout",

@@ -165,6 +165,18 @@ class GemmBase:
         return getattr(self.gemm_node, "isTcgen05", False)
 
     @property
+    def use_ds_read_tr_b(self) -> bool:
+        """ROCm/gfx950 opt-in: load non-transposed B via the hardware LDS
+        transpose-read (ds_read_tr16_b64) instead of the scalar gather."""
+        ann = getattr(self.gemm_node, "annotations", None)
+        if ann is None:
+            return False
+        val = ann.get("use_ds_read_tr_b")
+        if val is None:
+            return False
+        return int(val) != 0
+
+    @property
     def policy(self) -> GemmWarpPolicy:
         return getattr(self.gemm_node, "policy", None)
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from tilelang.tileop.gemm.gemm_base import GemmBase
 from tilelang.layout import make_swizzled_layout
+from tilelang.layout.swizzle import make_linear_layout
+from tilelang.rocm.target import target_is_gfx950
 from tilelang.rocm.intrinsics.mfma_macro_generator import (
     MatrixCoreIntrinEmitter,
 )
@@ -18,6 +20,21 @@ GEMM_INST_MFMA = "rocm.mfma"
 
 
 class GemmMFMA(GemmBase):
+    def _ds_read_tr_b_eligible(self, target: Target) -> bool:
+        """The gfx950 hardware LDS transpose-read fast path for the B load is only
+        valid for gemm_ss + non-transposed B + bf16/fp16, on gfx950. The B tile
+        must live UNSWIZZLED in LDS (handled by infer_layout returning a linear
+        layout for B), so N is physically contiguous for the 8-byte transpose-read."""
+        if not self.use_ds_read_tr_b:
+            return False
+        if not target_is_gfx950(target):
+            return False
+        if not self.is_gemm_ss():
+            return False
+        if self.trans_B:
+            return False
+        return str(self.b_dtype) in ("bfloat16", "float16")
+
     def infer_layout(self, target: Target, thread_nums: int):
         m_warp, n_warp = self.policy.compute_warp_partition(self.M, self.N, thread_nums, target, GEMM_INST_MFMA)
         warp_row_tiles = int(self.M // m_warp)
@@ -38,9 +55,11 @@ class GemmMFMA(GemmBase):
         )
 
         if self.is_gemm_ss():
+            # ds_read_tr16 needs B unswizzled (N contiguous) -> linear layout.
+            b_layout = make_linear_layout(self.B) if self._ds_read_tr_b_eligible(target) else make_swizzled_layout(self.B)
             return {
                 self.A: make_swizzled_layout(self.A),
-                self.B: make_swizzled_layout(self.B),
+                self.B: b_layout,
                 self.C: mfma_emitter.make_mfma_store_layout(self.C),
             }
         elif self.is_gemm_sr():
@@ -91,6 +110,7 @@ class GemmMFMA(GemmBase):
             k_pack=self.k_pack,
             target=target,
         )
+        mfma_emitter.use_ds_read_tr_b = self._ds_read_tr_b_eligible(target)
 
         k_pack = mfma_emitter.k_pack
         a_dtype = self.a_dtype

@@ -1558,6 +1558,36 @@ def ds_read_tr16_b64(src: BufferLikeType) -> PrimExpr:
     return tirx.call_intrin("uint32x2", tirx.op.Op.get("tl.ds_read_tr16_b64"), ptr)
 
 
+def ds_read_tr16_b64_to(dst: BufferLikeType, src: BufferLikeType) -> PrimExpr:
+    """Store-form LDS transpose read, 64-bit, 16-element transpose (gfx950 only).
+
+    Transpose-reads 4 bf16 from LDS (like `ds_read_tr16_b64`) and writes them
+    directly into a register/local destination `dst` (4 contiguous 16-bit
+    elements, e.g. a fragment slot). This exists because the `uint32x2` return of
+    the value-form cannot be unpacked at the TIR level, so it can't be consumed
+    by the MFMA emitter; the store-form feeds the transposed B fragment directly.
+
+    Args:
+        dst: A `Buffer`/`BufferRegion`/`BufferLoad` in local/register memory
+            (16-bit dtype), pointing at 4 contiguous elements.
+        src: A `Buffer`/`BufferRegion`/`BufferLoad` in shared memory.
+
+    Example:
+        >>> T.ds_read_tr16_b64_to(B_local[j * 4], smem[i])
+    """
+    if not isinstance(dst, BufferLikeTypeTuple):
+        raise TypeError(
+            f"T.ds_read_tr16_b64_to expects Buffer, BufferRegion, or BufferLoad for dst. Got {type(dst)}: {dst}"
+        )
+    if not isinstance(src, BufferLikeTypeTuple):
+        raise TypeError(
+            f"T.ds_read_tr16_b64_to expects Buffer, BufferRegion, or BufferLoad for src. Got {type(src)}: {src}"
+        )
+    dst_ptr = retrieve_ptr(dst, access_type="w")
+    src_ptr = retrieve_ptr(src, access_type="r")
+    return tirx.call_intrin("handle", tirx.op.Op.get("tl.ds_read_tr16_b64_to"), dst_ptr, src_ptr)
+
+
 def ds_read_tr8_b64(src: BufferLikeType) -> PrimExpr:
     """LDS transpose read, 64-bit, 8-element transpose (gfx950 only).
 

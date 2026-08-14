@@ -1392,6 +1392,12 @@ void CodeGenTileLangHIP::VisitExpr_(const CallNode *op, std::ostream &os) {
     ICHECK_EQ(op->args.size(), 1U)
         << "tl.ds_read_tr16_b64 expects one argument (smem_access_ptr).";
     os << "tl::ds_read_tr16_b64(" << PrintExpr(op->args[0]) << ")";
+  } else if (op->op.same_as(tl::ds_read_tr16_b64_to())) {
+    ICHECK_EQ(op->args.size(), 2U)
+        << "tl.ds_read_tr16_b64_to expects two arguments (dst_ptr, "
+           "smem_access_ptr).";
+    os << "tl::ds_read_tr16_b64_to(" << PrintExpr(op->args[0]) << ", "
+       << PrintExpr(op->args[1]) << ")";
   } else if (op->op.same_as(tl::ds_read_tr8_b64())) {
     ICHECK_EQ(op->args.size(), 1U)
         << "tl.ds_read_tr8_b64 expects one argument (smem_access_ptr).";

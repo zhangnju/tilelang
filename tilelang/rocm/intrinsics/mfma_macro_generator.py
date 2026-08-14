@@ -121,6 +121,10 @@ class MatrixCoreIntrinEmitter:
         self.threads = self.WARP_SIZE * (block_row_warps * block_col_warps) * reduce_k
         self.num_elems_per_byte = num_elems_per_byte
         self.thread_var = thread_var
+        # Opt-in gfx950 hardware LDS transpose-read for the non-transposed B load
+        # (ds_read_tr16_b64). Only correct when B lives UNSWIZZLED in LDS with N
+        # contiguous; off by default to avoid corrupting swizzled-B gemms.
+        self.use_ds_read_tr_b = False
 
     def _initialize_mfma_shape(self, mfma_shape: tuple[int, int, int] | None, a_dtype):
         """Set ``(M_DIM, N_DIM, k_dim)`` from an explicit shape or auto-detect.
@@ -436,6 +440,44 @@ class MatrixCoreIntrinEmitter:
         B_base1 = B_region.region[-1].min
         # Leading dimensions (e.g. pipeline stage axis) – empty for 2-D buffers
         B_other = [r.min for r in B_region.region[:-2]]
+
+        # gfx950 hardware LDS transpose-read fast path for non-transposed B.
+        # Replaces the per-lane scalar gather with ds_read_tr16_b64 (bf16/fp16):
+        # each lane reads 4 consecutive K rows for its N column in one 64-bit
+        # transpose-read. Requires B unswizzled in LDS (N contiguous, >=4x 16-bit
+        # = 8B contiguous). Bit-exact vs the scalar gather (validated all 64 lanes,
+        # k_dim=16 and k_dim=32). Opt-in via self.use_ds_read_tr_b.
+        lb = k_pack * local_size_b
+        b_is_16bit = str(self.b_dtype) in ("bfloat16", "float16")
+        use_tr = (
+            self.use_ds_read_tr_b
+            and (not is_transposed)
+            and b_is_16bit
+            and target_is_gfx950(self.target)
+            and lb % 4 == 0
+        )
+
+        if use_tr:
+            from tilelang.language.builtin import ds_read_tr16_b64_to
+
+            n_subreads = lb // 4
+
+            @T.macro
+            def _warp_ldmatrix_b_tr(B_local_buf, B_shared_buf, ki, thread_binding, rk=0):
+                tx, warp_n, _ = self.extract_thread_binding(thread_binding)
+                k_off = rk * chunk + ki * (k_pack * micro_size_k)
+                for j in T.serial(warp_cols):
+                    n_base = warp_n * warp_col_tiles + j * micro_size_y
+                    for kk in T.serial(n_subreads):
+                        # 4 K rows for this lane's N column, in one transpose-read.
+                        k_row = k_off + (tx // 16) * lb + kk * 4 + (tx % 16) // 4
+                        n_col = n_base + 4 * (tx % 4)
+                        ds_read_tr16_b64_to(
+                            B_local_buf[j * lb + kk * 4],
+                            B_buf[tuple(B_other) + (B_base0 + k_row, B_base1 + n_col)],
+                        )
+
+            return _warp_ldmatrix_b_tr(B_local_buf, B_shared_buf, ki, thread_binding, rk)
 
         @T.macro
         def _warp_ldmatrix_b(

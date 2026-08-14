@@ -1038,6 +1038,18 @@ TVM_DLL const Op &ds_read_tr16_b64();
 TVM_DLL const Op &ds_read_tr8_b64();
 
 /*!
+ * \brief Store-form of the gfx950 LDS transpose read (bf16, 16-element).
+ *
+ * Transpose-reads 4 bf16 from LDS and writes them into a register/local
+ * destination. Exists because the vector return of the value-form cannot be
+ * unpacked at the TIR level; this form lets the MFMA emitter feed the
+ * transposed B fragment directly.
+ *
+ * void ds_read_tr16_b64_to(dst_ptr, smem_access_ptr)
+ */
+TVM_DLL const Op &ds_read_tr16_b64_to();
+
+/*!
  * \brief tvm intrinsic for amd matrix core mfma instructions.
  *
  *  void tvm_mfma(StringImm shape, StringImm A_layout, StringImm B_layout,

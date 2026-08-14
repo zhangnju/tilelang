@@ -756,6 +756,16 @@ TIR_DEFINE_TL_BUILTIN(ds_read_tr8_b64)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kPure));
 
+// ds_read_tr16_b64_to(dst_ptr, smem_ptr) -> void
+// Store-form of the gfx950 LDS transpose read: transpose-reads 4 bf16 and writes
+// them into a register/local destination (dst_ptr). Exists because the uint32x2
+// return of the value-form cannot be unpacked at the TIR level; this form lets
+// the MFMA emitter feed the transposed B fragment directly.
+TIR_DEFINE_TL_BUILTIN(ds_read_tr16_b64_to)
+    .set_num_inputs(2)
+    .set_attr<TCallEffectKind>("TCallEffectKind",
+                               Integer(CallEffectKind::kOpaque));
+
 // __ldg(BufferLoad | Buffer, idx?) -> value
 // Treat as a pure call that returns the loaded value.
 TIR_DEFINE_TL_BUILTIN(__ldg).set_num_inputs(-1).set_attr<TCallEffectKind>(

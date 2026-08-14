@@ -41,6 +41,18 @@ CK_TILE_DEVICE uint2 ds_read_tr8_b64(const void *smem_ptr) {
   return result;
 }
 
+// Store-form of ds_read_tr16: transpose-read 4 bf16 from LDS and write them into
+// a register/local destination. This is the form the TIR intrinsic
+// `tl.ds_read_tr16_b64_to(dst, src)` lowers to, because the uint2 return of the
+// value-form cannot be unpacked at the TIR level. `dst` is a pointer to 4
+// contiguous 16-bit elements (a fragment slot); `src` points into __shared__.
+template <typename T>
+CK_TILE_DEVICE void ds_read_tr16_b64_to(T *dst, const void *smem_ptr) {
+  static_assert(sizeof(T) == 2, "ds_read_tr16_b64_to requires a 16-bit dst type");
+  uint2 v = ds_read_tr16_b64(smem_ptr);
+  __builtin_memcpy(dst, &v, sizeof(v));  // 8 bytes = 4x 16-bit
+}
+
 #endif // __gfx950__
 
 } // namespace tl

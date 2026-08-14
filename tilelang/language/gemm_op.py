@@ -156,6 +156,7 @@ def gemm(
     clear_accum: bool = False,
     k_pack: int = 1,
     mbar: BarrierType | None = None,
+    use_ds_read_tr_b: bool = False,
 ) -> tirx.PrimExpr:
     """TileLang GEMM operator.
 
@@ -179,10 +180,19 @@ def gemm(
         k_pack (int): Numbers of packed matrix cores, for ROCm only. Defaults to 1.
         mbar (BarrierType, i.e. Buffer | BufferLoad, or Var, optional): Mbarrier in Blackwell.
             Required when this GEMM lowers to TCGEN5MMA. Defaults to None.
+        use_ds_read_tr_b (bool): ROCm/gfx950 only. Load the non-transposed B operand
+            with the hardware LDS transpose-read (``ds_read_tr16_b64``) instead of the
+            scalar per-lane gather. Requires B in shared memory with a plain row-major
+            (unswizzled) layout, bf16/fp16, and a non-transposed B. Ignored on other
+            targets/paths. Defaults to False.
 
     Returns:
         tirx.Call: A handle to the GEMM operation.
     """
+    annotations = {}
+    if use_ds_read_tr_b:
+        annotations["use_ds_read_tr_b"] = 1
+    annotations = annotations or None
     return _gemm_impl(
         "tl.tileop.gemm",
         A,
@@ -195,6 +205,7 @@ def gemm(
         k_pack,
         0,
         mbar,
+        annotations,
     )
 
 
