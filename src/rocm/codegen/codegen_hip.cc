@@ -924,6 +924,35 @@ void CodeGenTileLangHIP::VisitExpr_(const CastNode *op, std::ostream &os) {
     return;
   }
 
+  // float32 -> bfloat16 (gfx950): use the hardware packed conversion
+  // v_cvt_pk_bf16_f32 (one op per 2 lanes, with RNE + special-value handling)
+  // instead of the ~10-VALU-per-element CK-Tile hip_bfloat16 software cast.
+  // Even lane widths only; odd tails fall through to the scalar path below.
+  if (from_ty.is_float() && from_ty.bits() == 32 && target_ty.is_bfloat16() &&
+      (from_ty.lanes() % 2 == 0) && from_ty.lanes() >= 2) {
+    int lanes = from_ty.lanes();
+    std::string sret = name_supply_->FreshName("_");
+    this->PrintIndent();
+    this->PrintType(target_ty, stream);
+    stream << ' ' << sret << ";\n";
+    std::string src = SSAGetID(PrintExpr(op->value), from_ty);
+    for (int i = 0; i < lanes; i += 2) {
+      std::ostringstream f0, f1;
+      PrintVecElemLoad(src, from_ty, i, f0);
+      PrintVecElemLoad(src, from_ty, i + 1, f1);
+      std::string tmp = name_supply_->FreshName("_f2bf2_");
+      this->PrintIndent();
+      stream << "uint1 " << tmp << " = uint1{__cvt_pack_bfloat162(" << f0.str()
+             << ", " << f1.str() << ")};\n";
+      PrintVecElemStore(sret, target_ty, i,
+                        "((bfloat16_t*)(&(" + tmp + ")))[0]");
+      PrintVecElemStore(sret, target_ty, i + 1,
+                        "((bfloat16_t*)(&(" + tmp + ")))[1]");
+    }
+    os << sret;
+    return;
+  }
+
   // float16 -> FP4
   if (from_ty.is_float16() && target_ty.is_float4_e2m1fn() && fp4_pair_cast) {
     std::string sret = name_supply_->FreshName("_");

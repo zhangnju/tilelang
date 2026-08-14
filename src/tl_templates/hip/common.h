@@ -111,6 +111,25 @@ TL_DEVICE unsigned __pack_bfloat162(const bfloat16_t x, const bfloat16_t y) {
   return (v1 << 16) | v0;
 }
 
+// Hardware-accelerated packed f32->bf16 conversion (gfx950).  The CK-Tile
+// `hip_bfloat16` float cast lowers to ~10 scalar VALU (exponent extract, NaN/Inf
+// compares, round-to-nearest-even mantissa select) PER element; on gfx950 the
+// `v_cvt_pk_bf16_f32` instruction does two conversions (with RNE + special-value
+// handling) in ONE op.  The 32-bit result packs two IEEE bf16 values, which is
+// bit-identical to bfloat16_t storage (both are IEEE bf16; only the C++ type
+// differs from ROCm's __hip_bfloat16), so we reinterpret into the bf16 pair.
+// Returns the packed uint (lane0 = low 16b, lane1 = high 16b), matching
+// __pack_bfloat162's layout so it is a drop-in for the pack+cast pattern.
+TL_DEVICE unsigned __cvt_pack_bfloat162(const float x, const float y) {
+#if defined(__gfx950__)
+  unsigned packed;
+  asm volatile("v_cvt_pk_bf16_f32 %0, %1, %2" : "=v"(packed) : "v"(x), "v"(y));
+  return packed;
+#else
+  return __pack_bfloat162((bfloat16_t)x, (bfloat16_t)y);
+#endif
+}
+
 TL_DEVICE int tl_dp4a_fallback(const int a, const int b, int c) {
 #pragma unroll
   for (int i = 0; i < 4; ++i) {
