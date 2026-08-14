@@ -157,6 +157,7 @@ def gemm(
     k_pack: int = 1,
     mbar: BarrierType | None = None,
     use_ds_read_tr_b: bool = False,
+    use_padded_a: bool = False,
     mfma_shape: tuple[int, int, int] | None = None,
 ) -> tirx.PrimExpr:
     """TileLang GEMM operator.
@@ -193,6 +194,8 @@ def gemm(
     annotations = {}
     if use_ds_read_tr_b:
         annotations["use_ds_read_tr_b"] = 1
+    if use_padded_a:
+        annotations["use_padded_a"] = 1
     if mfma_shape is not None:
         annotations["mfma_shape"] = [int(x) for x in mfma_shape]
     annotations = annotations or None

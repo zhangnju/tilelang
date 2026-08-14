@@ -280,6 +280,8 @@ Fragment MakeGemmFragmentACDNA(const int block_m, const int block_n,
 // Default Memory Layout (row-major linear layout for any dimension)
 Layout MakeLinearLayout(ffi::Array<PrimExpr> shape);
 Layout MakeGemmABLayoutPadded(int stride, int continuous, int element_size);
+Layout MakeLinearLayoutPadded(ffi::Array<PrimExpr> shape, int element_size,
+                              int warp_size = 64, int pad = -1);
 Layout MakeGemmABLayout(int mat_stride, int mat_continuous, int continuity,
                         int element_size, bool k_inner = true);
 Layout MakeGemmABLayoutHopper(int mat_stride, int mat_continuous,

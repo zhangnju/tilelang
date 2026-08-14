@@ -72,6 +72,41 @@ CK_TILE_DEVICE void async_buffer_load_dword_v(void *smem, int32x4_t rsrc,
                : "memory");
 }
 
+// -----------------------------------------------------------------------------
+// Async global->VGPR load (Triton-style, for latency-bound serial loops).
+//
+// Unlike the `buffer_load ... lds` path above (which lands directly in LDS and
+// whose completion is a shared-memory hazard forcing an early __syncthreads),
+// these load a 128-bit tile into a REGISTER vector via `buffer_load_dwordx4`
+// WITHOUT `lds`. LLVM leaves the `s_waitcnt vmcnt` where the value is first
+// used, so an early-issued load overlaps with the intervening compute and the
+// caller stores the register to shared only when ready (deferred ds_write).
+// This is exactly how Triton hides the per-step w/k loads on the scan chain:
+// the load latency is covered by the two loop-carried MFMAs instead of stalling
+// on a shared-memory barrier. Microbench (gfx950, 128-step serial chain):
+// buffer_load->VGPR->deferred-shared is ~1.19x faster than sync load->shared.
+//
+// `buffer_load_to_reg_x4` returns a 16-byte register tile loaded from
+// (wave_base + voffset[lane]). The value is only realized (s_waitcnt vmcnt) at
+// first use, so issue it EARLY (prefetch next iter) and consume/store it LATE;
+// the intervening MFMAs cover the load latency. `wave_base` must be wave-uniform
+// (readfirstlane of lane-0's pointer) and `voffset` the per-lane byte delta, so
+// arbitrary per-lane strides work (same addressing as cp_async_gs_linear).
+// Verified on gfx950: the emitted buffer_load_dwordx4 (no lds) has its waitcnt
+// deferred past the loop's compute, hiding the load on the serial scan chain.
+CK_TILE_DEVICE int32x4_t buffer_load_to_reg_x4(const void *wave_base,
+                                               index_t voffset) {
+  auto rsrc = __builtin_amdgcn_make_buffer_rsrc(
+      const_cast<void *>(wave_base), /*stride=*/0,
+      /*num_records=*/0xffffffffu, /*flags=*/CK_TILE_BUFFER_RESOURCE_3RD_DWORD);
+  return __builtin_amdgcn_raw_buffer_load_b128(rsrc, voffset, 0, 0);
+}
+
+// Store a previously-loaded register tile into LDS (the deferred ds_write half).
+CK_TILE_DEVICE void store_reg_x4_to_lds(void *lds_ptr, int32x4_t val) {
+  *reinterpret_cast<int32x4_t *>(lds_ptr) = val;
+}
+
 // gfx950 (CDNA4 / MI350): 128-bit direct-to-LDS async load.
 // buffer_load_dwordx4 ... lds bypasses VGPRs entirely, giving 4x the
 // bandwidth of the 32-bit path and overlapping with MFMA computation.
@@ -96,8 +131,7 @@ TL_DEVICE void cp_async_gs(void *lds_base_ptr, void const *global_base_ptr) {
     // (i.e. no swizzling).  The pipeline-planning pass generates swizzled LDS
     // layouts that violate this constraint, so we always use the synchronous
     // uint4 store here.  The T.async_copy path (called with a known-linear LDS
-    // layout) may still use the fast async path via async_buffer_load_dwordx4_v
-    // directly.
+    // layout) uses cp_async_gs_linear below for the fast direct-to-LDS path.
     *(uint4 *)lds_base_ptr = *(const uint4 *)global_base_ptr;
   } else if constexpr (N == 8) {
     *(uint2 *)lds_base_ptr = *(const uint2 *)global_base_ptr;
@@ -108,6 +142,127 @@ TL_DEVICE void cp_async_gs(void *lds_base_ptr, void const *global_base_ptr) {
                                   threadIdx.x),
         threadIdx.x * N /*assume 4 bytes*/);
   }
+}
+
+// Direct global->LDS variant: bypasses VGPRs via buffer_load_dwordx4 ... lds
+// (gfx950).  REQUIRES a linear, un-swizzled LDS destination (lane i writes the
+// i-th 16B slot) — only valid on the T.async_copy(linear_lds) path.  Falls back
+// to the synchronous store on non-gfx950 or unsupported N.
+//
+// The `buffer_load ... offen lds` instruction reads, per lane, from
+// (wave_scalar_base + voffset[lane]) in global and appends the results into LDS
+// in ascending lane order.  So `voffset` may encode ANY per-lane global offset
+// (including a non-unit source stride from a sliced tensor), while the LDS side
+// stays contiguous.  Earlier code hardcoded voffset = threadIdx.x*N and derived
+// the base as (global_base_ptr - threadIdx.x*N), which is only correct when the
+// source is contiguous (adjacent lanes N bytes apart).  For a strided source
+// (e.g. U0[b, t0:t0+BT, h, v0:v0+bV]) that assumption breaks and the wave base
+// (taken via readfirstlane) is garbage.  Instead pick lane-0's pointer as the
+// wave base and compute the true per-lane byte offset from it.
+// Broadcast a 64-bit pointer from lane 0 to all lanes. readfirstlane operates on
+// 32-bit values, so a 64-bit pointer must be broadcast in two halves — doing a
+// single 32-bit readfirstlane on a pointer truncates the high word and yields a
+// wild address.
+CK_TILE_DEVICE const char *wave_readfirstlane_ptr(const char *p) {
+  uint64_t u = reinterpret_cast<uint64_t>(p);
+  uint32_t lo = __builtin_amdgcn_readfirstlane(static_cast<uint32_t>(u));
+  uint32_t hi =
+      __builtin_amdgcn_readfirstlane(static_cast<uint32_t>(u >> 32));
+  return reinterpret_cast<const char *>((static_cast<uint64_t>(hi) << 32) | lo);
+}
+
+// Direct global->LDS variant: bypasses VGPRs via buffer_load_dwordx4 ... lds
+// (gfx950).  REQUIRES a linear, un-swizzled LDS destination (lane i writes the
+// i-th 16B slot) — only valid on the T.async_copy(linear_lds) path.  Falls back
+// to the synchronous store on non-gfx950 or unsupported N.
+//
+// The `buffer_load ... offen lds` instruction reads, per lane, from
+// (wave_scalar_base + voffset[lane]) in global and appends the results into LDS
+// in ascending lane order.  So `voffset` may encode ANY per-lane global offset
+// (including a non-unit source stride from a sliced tensor), while the LDS side
+// stays contiguous.  Earlier code hardcoded voffset = threadIdx.x*N and derived
+// the base as (global_base_ptr - threadIdx.x*N), which is only correct when the
+// source is contiguous (adjacent lanes N bytes apart).  For a strided source
+// (e.g. U0[b, t0:t0+BT, h, v0:v0+bV]) that assumption breaks.  Instead take
+// lane-0's pointer as the wave base and compute the true per-lane byte offset.
+template <int N>
+TL_DEVICE void cp_async_gs_linear(void *lds_base_ptr,
+                                  void const *global_base_ptr) {
+#if defined(__gfx950__)
+  if constexpr (N == 16 || N == 4) {
+    const char *lane_ptr = reinterpret_cast<const char *>(global_base_ptr);
+    // Wave-uniform base = lane 0's global pointer (correct 64-bit broadcast).
+    const char *wave_base = wave_readfirstlane_ptr(lane_ptr);
+    // True per-lane byte offset from the wave base (handles arbitrary stride;
+    // reduces to threadIdx.x*N for a contiguous source).
+    index_t voffset = static_cast<index_t>(lane_ptr - wave_base);
+    if constexpr (N == 16) {
+      async_buffer_load_dwordx4_v(lds_base_ptr,
+                                  make_wave_buffer_resource(wave_base), voffset);
+    } else {
+      async_buffer_load_dword_v(lds_base_ptr,
+                                make_wave_buffer_resource(wave_base), voffset);
+    }
+  } else {
+    cp_async_gs<N>(lds_base_ptr, global_base_ptr);
+  }
+#else
+  cp_async_gs<N>(lds_base_ptr, global_base_ptr);
+#endif
+}
+
+// Swizzled-destination direct global->LDS async copy (gfx950).
+//
+// NOT CURRENTLY ENABLED — kept as scaffolding. The generator that would select
+// this (rocm/op/copy.cc DstLdsLayoutIsSwizzled) is hardcoded off because
+// TileLang's 2D GEMM XOR swizzle scatters one wavefront's chunks across a
+// NON-CONTIGUOUS LDS span (measured span 544 for a 64-lane wave), while
+// `buffer_load ... lds` can only write a contiguous per-wave block. Source-side
+// shuffling (below) cannot fix a non-contiguous destination. This code path is
+// only correct for a swizzle whose per-wave chunk set is contiguous.
+//
+// The hardware `buffer_load ... lds` writes LDS CONTIGUOUSLY in ascending lane
+// order (lane L -> wave_base + L*N bytes, m0 base is readfirstlane'd — per-lane
+// LDS pointers are IGNORED).  So the swizzle must be moved entirely to the
+// SOURCE side: lane L must issue the global offset of the element whose swizzled
+// destination is contiguous slot L.  Mirrors Triton's emitSwizzledLaneOffsets +
+// ds_permute.
+//
+// `chunk` = this lane's swizzled LDS chunk index (= dst_swizzled_offset / N-elems
+// = which contiguous slot this lane's own element belongs in), supplied by
+// codegen from the store layout.  We SCATTER each lane's own global voffset to
+// its swizzled chunk with ds_permute (out[chunk[L]] = my_voffset[L]); the result
+// is exactly the voffset that contiguous slot L must load.  ds_permute address
+// is byte-based (chunk << 2).
+//
+// lds_wave_base = readfirstlane(lds_base_ptr) is the wave's slot-0 LDS address;
+// HW adds lane*N to it for the contiguous write.
+template <int N>
+TL_DEVICE void cp_async_gs_swizzled(void *lds_base_ptr,
+                                    void const *global_base_ptr, int chunk) {
+#if defined(__gfx950__)
+  if constexpr (N == 16 || N == 4) {
+    const char *lane_ptr = reinterpret_cast<const char *>(global_base_ptr);
+    const char *wave_base = wave_readfirstlane_ptr(lane_ptr);
+    index_t my_voffset = static_cast<index_t>(lane_ptr - wave_base);
+    // Scatter my_voffset to my swizzled chunk: out[chunk] = my_voffset.
+    index_t voffset = __builtin_amdgcn_ds_permute(chunk << 2, my_voffset);
+    const char *lds_ptr = reinterpret_cast<const char *>(lds_base_ptr);
+    void *lds_write_base =
+        const_cast<char *>(wave_readfirstlane_ptr(lds_ptr));
+    if constexpr (N == 16) {
+      async_buffer_load_dwordx4_v(lds_write_base,
+                                  make_wave_buffer_resource(wave_base), voffset);
+    } else {
+      async_buffer_load_dword_v(lds_write_base,
+                                make_wave_buffer_resource(wave_base), voffset);
+    }
+  } else {
+    cp_async_gs<N>(lds_base_ptr, global_base_ptr);
+  }
+#else
+  cp_async_gs<N>(lds_base_ptr, global_base_ptr);
+#endif
 }
 
 template <int N>

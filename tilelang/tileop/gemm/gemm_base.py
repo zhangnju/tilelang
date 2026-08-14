@@ -193,6 +193,20 @@ class GemmBase:
         return tuple(int(x) for x in val)
 
     @property
+    def use_padded_a(self) -> bool:
+        """ROCm/gfx950 opt-in: give the A operand a wave-boundary padded-linear
+        LDS layout so its global->shared load can take the direct-to-LDS async
+        copy path (cp_async_gs_linear). Requires a compatible A shape; the
+        GemmMFMA eligibility check gates it."""
+        ann = getattr(self.gemm_node, "annotations", None)
+        if ann is None:
+            return False
+        val = ann.get("use_padded_a")
+        if val is None:
+            return False
+        return int(val) != 0
+
+    @property
     def policy(self) -> GemmWarpPolicy:
         return getattr(self.gemm_node, "policy", None)
 

@@ -200,6 +200,7 @@ def async_copy(
     coalesced_width: int | None = None,
     annotations: dict | None = None,
     loop_layout: Any | None = None,
+    linear_lds: bool = False,
 ) -> tirx.PrimExpr | tirx.Stmt:
     """Asynchronous copy primitive lowered through cp.async.
 
@@ -214,6 +215,11 @@ def async_copy(
         coalesced_width (Optional[int], keyword-only): Width for coalesced memory access. Defaults to None.
         annotations (Optional[dict], keyword-only): Additional annotations dict.
         loop_layout (Optional[Fragment], keyword-only): A parallel loop layout hint for the SIMT copy loop.
+        linear_lds (bool, keyword-only): ROCm/gfx950 only. Assert that the shared
+            (LDS) destination is linear/un-swizzled (base + threadIdx.x * bytes),
+            enabling the direct global->LDS `buffer_load_dwordx4 ... lds` path that
+            bypasses VGPRs. Only correct when the destination is NOT a swizzled
+            GEMM operand — using it on a swizzled buffer produces wrong results.
 
     Returns:
         tirx.Call: A handle to the async copy operation
@@ -227,6 +233,8 @@ def async_copy(
         ann["coalesced_width"] = coalesced_width
     if loop_layout is not None and "parallel_loop_layout" not in ann:
         ann["parallel_loop_layout"] = loop_layout
+    if linear_lds:
+        ann["linear_lds"] = True
 
     return tirx.call_intrin(
         "handle",

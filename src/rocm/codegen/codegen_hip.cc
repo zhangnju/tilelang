@@ -1228,13 +1228,22 @@ void CodeGenTileLangHIP::VisitExpr_(const CallNode *op, std::ostream &os) {
     std::string dst = this->PrintExpr(op->args[0]);
     std::string src = this->PrintExpr(op->args[1]);
     std::string size = this->PrintExpr(op->args[2]);
+    // Direct global->LDS (buffer_load ... lds) path selection:
+    //   swizzled_lds -> cp_async_gs_swizzled (ds_bpermute source reindex)
+    //   linear_lds   -> cp_async_gs_linear
+    //   otherwise    -> cp_async_gs (synchronous)
+    const char *gs = op->annotations.count("swizzled_lds")
+                         ? "tl::cp_async_gs_swizzled"
+                         : (op->annotations.count("linear_lds")
+                                ? "tl::cp_async_gs_linear"
+                                : "tl::cp_async_gs");
     this->PrintIndent();
     if (op->args.size() == 3) {
       // Non-predicated version
-      this->stream << "tl::cp_async_gs<" << size << ">(" << dst << ", " << src
+      this->stream << gs << "<" << size << ">(" << dst << ", " << src
                    << ");\n";
     } else {
-      // Predicated version
+      // Predicated version (no direct-LDS variant; falls back to conditional)
       std::string condition = this->PrintExpr(op->args[3]);
       this->stream << "tl::cp_async_gs_conditional<" << size << ">(" << dst
                    << ", " << src << ", " << condition << ");\n";
@@ -1244,9 +1253,14 @@ void CodeGenTileLangHIP::VisitExpr_(const CallNode *op, std::ostream &os) {
     std::string dst = this->PrintExpr(op->args[0]);
     std::string src = this->PrintExpr(op->args[1]);
     std::string size = std::to_string(total_bytes);
+    const char *gs = op->annotations.count("swizzled_lds")
+                         ? "tl::cp_async_gs_swizzled"
+                         : (op->annotations.count("linear_lds")
+                                ? "tl::cp_async_gs_linear"
+                                : "tl::cp_async_gs");
     this->PrintIndent();
     if (op->args.size() == 3) {
-      this->stream << "tl::cp_async_gs<" << size << ">(" << dst << ", " << src
+      this->stream << gs << "<" << size << ">(" << dst << ", " << src
                    << ");\n";
     } else {
       std::string condition = this->PrintExpr(op->args[3]);

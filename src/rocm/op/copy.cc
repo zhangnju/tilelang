@@ -134,9 +134,19 @@ private:
         /*parallel_loop=*/true,
         /*should_vectorize=*/true, par_op->LoopLayoutRequiresPaddingGuard());
 
+    // linear_lds is enabled either explicitly (T.async_copy(linear_lds=True)) or
+    // automatically when the auto-pipeliner produced a copy whose dst LDS layout
+    // is already linear (non-swizzled). The latter lets the normal T.copy +
+    // T.Pipelined path take the direct global->LDS async route without a manual
+    // annotation.
+    bool linear_lds = GetBoolAnnotation(op, "linear_lds") ||
+                      DstLdsLayoutIsLinear(op, lower_args.layout_map);
+    bool swizzled_lds = DstLdsLayoutIsSwizzled(op, lower_args.layout_map);
     auto inject_result =
         InjectROCmAsyncCopy(lowered_loop, /*async_without_async_commit_wait=*/
-                            no_implicit_commit_wait || GetIsAsyncCopy(op));
+                            no_implicit_commit_wait || GetIsAsyncCopy(op),
+                            /*linear_lds=*/linear_lds,
+                            /*swizzled_lds=*/swizzled_lds);
     Stmt async_copy_loop = inject_result.stmt;
     if (!inject_result.injected_rocm_async_copy) {
       DLOG(WARNING) << "ROCm async-copy rewrite miss for copy src="
@@ -183,6 +193,49 @@ private:
       return false;
     }
     return true;
+  }
+
+  // Decide whether the direct global->LDS (buffer_load ... lds) async path is
+  // legal for this copy without an explicit T.async_copy(linear_lds=True).  It
+  // requires the destination shared buffer to have a NON-swizzled (linear)
+  // layout, because the wave `buffer_load ... lds` writes LDS contiguously per
+  // lane.  We only opt in when the dst buffer actually has a layout entry and
+  // DetectSwizzleMode reports None (linear); otherwise stay on the safe
+  // synchronous path.
+  static bool DstLdsLayoutIsLinear(const CopyNode &op,
+                                   const LayoutMap &layout_map) {
+    if (!IsSharedBuffer(op.dst)) {
+      return false;
+    }
+    auto it = layout_map.find(op.dst);
+    if (it == layout_map.end()) {
+      return false;
+    }
+    Layout dst_layout = (*it).second.as<Layout>().value_or(Layout());
+    if (!dst_layout.defined()) {
+      return false;
+    }
+    return DetectSwizzleMode(dst_layout, op.dst) == SwizzleMode::None();
+  }
+
+  // Whether the dst shared buffer has a (bank-conflict-avoiding) XOR swizzle
+  // layout that we could realize on the direct global->LDS async path via a
+  // source-side reindex (cp_async_gs_swizzled).
+  //
+  // DISABLED (returns false): the gfx950 `buffer_load ... lds` instruction can
+  // only write a CONTIGUOUS per-wave LDS block, but TileLang's 2D GEMM XOR
+  // swizzle scatters one wavefront's 64 chunks across a non-contiguous span
+  // (measured span = 544 chunks for a 64-lane wave due to the (tx&15)>>3 * 4096
+  // term). No amount of source-side ds_permute/ds_bpermute can fix that — the
+  // destination block itself is non-contiguous, which the direct-to-LDS HW does
+  // not support (Triton requires a contiguous per-wave shared block; TileLang's
+  // swizzle does not provide one). The scaffolding below (swizzled_lds
+  // annotation, cp_async_gs_swizzled template) is kept for the record but not
+  // enabled. Realizing swizzled async would require a swizzle layout whose
+  // per-wave chunk set is contiguous.
+  static bool DstLdsLayoutIsSwizzled(const CopyNode & /*op*/,
+                                     const LayoutMap & /*layout_map*/) {
+    return false;
   }
 
   static bool CheckCPAsyncCopy(const CopyNode &op, Target target,

@@ -30,8 +30,11 @@ using namespace ffi;
 
 class ROCmAsyncCopyInjector : public StmtMutator {
 public:
-  explicit ROCmAsyncCopyInjector(bool async_without_async_commit_wait)
-      : async_without_async_commit_wait_(async_without_async_commit_wait) {}
+  explicit ROCmAsyncCopyInjector(bool async_without_async_commit_wait,
+                                 bool linear_lds = false,
+                                 bool swizzled_lds = false)
+      : async_without_async_commit_wait_(async_without_async_commit_wait),
+        linear_lds_(linear_lds), swizzled_lds_(swizzled_lds) {}
 
   bool InjectedROCmAsyncCopy() const { return injected_rocm_async_copy_; }
 
@@ -469,7 +472,7 @@ private:
                  IntImm(DataType::Int(32), rw_mask)});
   }
 
-  static Optional<Stmt>
+  Optional<Stmt>
   MakeCPAsyncStmtFromLoads(const BufferStoreNode *store,
                            const BufferLoad &dst_base_load,
                            const BufferLoad &src_base_load, int num_elems,
@@ -479,6 +482,12 @@ private:
     PrimExpr src_access_ptr =
         MakeAccessPtrFromLoad(src_base_load, num_elems, /*rw_mask=*/1);
 
+    // Trailing flag arg: 1 = destination LDS is linear/un-swizzled, so codegen
+    // may use the direct global->LDS path (cp_async_gs_linear). Predicated form
+    // keeps the predicate before the flag so the arg count still distinguishes
+    // predicated (>=4 args) from non-predicated (3 args) — codegen only reads
+    // the flag when present via the linear_lds channel below, so we instead
+    // stash it on the call's annotations to avoid perturbing arg parsing.
     Array<PrimExpr> cp_async_args;
     if (predicated) {
       cp_async_args = {dst_access_ptr, src_access_ptr, PrimExpr(num_elems),
@@ -486,8 +495,13 @@ private:
     } else {
       cp_async_args = {dst_access_ptr, src_access_ptr, PrimExpr(num_elems)};
     }
-    return Evaluate(
-        Call(store->buffer->dtype, tvm::tl::ptx_cp_async(), cp_async_args));
+    Call call(store->buffer->dtype, tvm::tl::ptx_cp_async(), cp_async_args);
+    if (swizzled_lds_) {
+      call.CopyOnWrite()->annotations.Set("swizzled_lds", Bool(true));
+    } else if (linear_lds_) {
+      call.CopyOnWrite()->annotations.Set("linear_lds", Bool(true));
+    }
+    return Evaluate(call);
   }
 
   static Stmt MakeCommitGroupStmt() {
@@ -671,6 +685,8 @@ private:
   // `SummarizeAsyncIntrinsics` helpers to avoid redundant traversals.
 
   bool async_without_async_commit_wait_{false};
+  bool linear_lds_{false};
+  bool swizzled_lds_{false};
   int current_vectorized_lanes_{1};
   std::vector<ActiveVectorizedLoop> active_vectorized_loops_;
   arith::Analyzer analyzer_;
@@ -680,8 +696,10 @@ private:
 };
 
 ROCmAsyncCopyInjectResult
-InjectROCmAsyncCopy(const Stmt &body, bool async_without_async_commit_wait) {
-  ROCmAsyncCopyInjector injector(async_without_async_commit_wait);
+InjectROCmAsyncCopy(const Stmt &body, bool async_without_async_commit_wait,
+                    bool linear_lds, bool swizzled_lds) {
+  ROCmAsyncCopyInjector injector(async_without_async_commit_wait, linear_lds,
+                                 swizzled_lds);
   Stmt injected = injector(body);
   return {injector.Finalize(injected), injector.InjectedROCmAsyncCopy()};
 }

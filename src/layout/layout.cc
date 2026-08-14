@@ -1322,6 +1322,10 @@ TVM_FFI_STATIC_INIT_BLOCK() {
            })
       .def("tl.make_linear_layout",
            [](Array<PrimExpr> shape) { return MakeLinearLayout(shape); })
+      .def("tl.make_linear_layout_padded",
+           [](Array<PrimExpr> shape, int element_size) {
+             return MakeLinearLayoutPadded(shape, element_size);
+           })
       .def("tl.make_gemm_fragment_8x8", []() { return MakeGemmFragment8x8(); })
       .def("tl.make_gemm_fragment_8x8_transposed",
            []() { return MakeGemmFragment8x8Transposed(); })

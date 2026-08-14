@@ -745,7 +745,7 @@ public:
       if (new_args.same_as(op->args)) {
         return GetRef<PrimExpr>(op);
       }
-      return Call(op->dtype, op->op, new_args);
+      return Call(op->dtype, op->op, new_args, op->annotations);
     }
 
     auto bits_per_call = GetCPAsyncBitsPerCall(op, count);
@@ -775,7 +775,7 @@ public:
     if (new_args.same_as(op->args)) {
       return GetRef<PrimExpr>(op);
     }
-    return Call(op->dtype, op->op, new_args);
+    return Call(op->dtype, op->op, new_args, op->annotations);
   }
 
   // Call

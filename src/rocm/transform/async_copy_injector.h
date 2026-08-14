@@ -19,7 +19,8 @@ struct ROCmAsyncCopyInjectResult {
  */
 ROCmAsyncCopyInjectResult
 InjectROCmAsyncCopy(const tvm::tirx::Stmt &body,
-                    bool async_without_async_commit_wait = false);
+                    bool async_without_async_commit_wait = false,
+                    bool linear_lds = false, bool swizzled_lds = false);
 
 } // namespace tl
 } // namespace tvm

@@ -35,6 +35,27 @@ class GemmMFMA(GemmBase):
             return False
         return str(self.b_dtype) in ("bfloat16", "float16")
 
+    def _a_padded_eligible(self, target: Target) -> bool:
+        """Opt-in (use_padded_a): give the A operand a wave-boundary padded-linear
+        LDS layout so its global->shared load takes the gfx950 direct-to-LDS async
+        path. Gated to shapes proven compatible with the MFMA A-read:
+          - gemm_ss, non-transposed A, bf16/fp16, gfx950
+          - A rows (M) >= 32 and A contiguous K >= 64
+        Small A tiles (e.g. the 16x16 Neumann-inverse gemm) require the specific
+        MFMA A swizzle and conflict with padded-linear, so they are excluded
+        (empirically: M<32 fails warp-partition; K<64 gives wrong results)."""
+        if not self.use_padded_a:
+            return False
+        if not target_is_gfx950(target):
+            return False
+        if not self.is_gemm_ss():
+            return False
+        if self.trans_A:
+            return False
+        if str(self.a_dtype) not in ("bfloat16", "float16"):
+            return False
+        return int(self.M) >= 32 and int(self.K) >= 64
+
     def infer_layout(self, target: Target, thread_nums: int):
         m_warp, n_warp = self.policy.compute_warp_partition(self.M, self.N, thread_nums, target, GEMM_INST_MFMA)
         warp_row_tiles = int(self.M // m_warp)
@@ -58,8 +79,16 @@ class GemmMFMA(GemmBase):
         if self.is_gemm_ss():
             # ds_read_tr16 needs B unswizzled (N contiguous) -> linear layout.
             b_layout = make_linear_layout(self.B) if self._ds_read_tr_b_eligible(target) else make_swizzled_layout(self.B)
+            # use_padded_a: wave-boundary padded-linear A so its global->shared
+            # load takes the direct-to-LDS async path (MFMA A-read follows via
+            # Layout::Forward). Gated to compatible shapes by _a_padded_eligible.
+            if self._a_padded_eligible(target):
+                from tilelang.layout.swizzle import make_padded_linear_layout
+                a_layout = make_padded_linear_layout(self.A)
+            else:
+                a_layout = make_swizzled_layout(self.A)
             return {
-                self.A: make_swizzled_layout(self.A),
+                self.A: a_layout,
                 self.B: b_layout,
                 self.C: mfma_emitter.make_mfma_store_layout(self.C),
             }

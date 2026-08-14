@@ -607,6 +607,56 @@ Layout MakeGemmABLayoutPadded(int stride, int continuous, int element_size) {
   return Layout(Array{i, j}, {i * padded + j});
 }
 
+// WAVE-BOUNDARY padded row-major linear layout for a shared buffer, for the
+// gfx950 direct-to-LDS async copy (buffer_load ... lds).
+//
+// The async copy writes LDS CONTIGUOUSLY per wavefront: one wave (warp_size
+// lanes, each moving vec = 128/element_size elements) writes exactly
+// `interval = warp_size * vec` contiguous elements.  To stay async-compatible we
+// may ONLY insert padding gaps at wave boundaries, NOT per row (per-row padding
+// breaks per-wave contiguity — verified: a 4-row block spans 67 chunks not 64).
+//
+// Formula (e = row-major linear element index):
+//     lds_off = e + (e / interval) * pad
+// The staircase gap of `pad` elements every `interval` elements keeps each
+// wave's block contiguous (gap falls only between waves) while staggering
+// successive waves' rows onto different LDS banks — giving bank-conflict-free
+// MFMA ds_read.  `pad` defaults to vec (one 16B/thread bank-set shift), matching
+// Triton's conservative padding; callers may tune it.
+//
+// Reduces to plain MakeLinearLayout when pad==0.
+Layout MakeLinearLayoutPadded(Array<PrimExpr> shape, int element_size,
+                              int warp_size, int pad) {
+  int ndim = static_cast<int>(shape.size());
+  ICHECK_GE(ndim, 1);
+  Array<IterVar> iter_vars;
+  for (int i = 0; i < ndim; i++) {
+    iter_vars.push_back(MakeIterVar(std::string{char('i' + i)}, shape[i]));
+  }
+  // Row-major linear element index e.
+  PrimExpr e = 0;
+  for (int i = 0; i < ndim; i++) {
+    PrimExpr stride = 1;
+    for (int j = i + 1; j < ndim; j++) {
+      stride = stride * shape[j];
+    }
+    e = e + iter_vars[i]->var * stride;
+  }
+  if (pad == 0) {
+    // Explicit "no padding" -> plain row-major linear.
+    return Layout(iter_vars, {e});
+  }
+  int vec = 128 / element_size;
+  int interval = warp_size * vec;
+  if (pad < 0) {
+    // Auto: one 16B (vec-element) bank-set shift per wave boundary.
+    pad = vec;
+  }
+  PrimExpr lds_off =
+      e + FloorDiv(e, IntImm(e.dtype(), interval)) * IntImm(e.dtype(), pad);
+  return Layout(iter_vars, {lds_off});
+}
+
 Layout MakeGemmVoltaABLayoutCrosswise(int stride, int continuous) {
   ICHECK(stride % 32 == 0 && continuous % 32 == 0);
   IterVar i = MakeIterVar("i", stride);

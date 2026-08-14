@@ -140,6 +140,24 @@ def make_linear_layout(buffer_or_load_or_region: BufferLikeType):
     return _ffi_api.make_linear_layout(list(shape))
 
 
+def make_padded_linear_layout(buffer_or_load_or_region: BufferLikeType):
+    """
+    Create a padded row-major linear layout: affine (direct-to-LDS async
+    compatible) but with per-row padding to avoid LDS bank conflicts on the
+    consumer read. The last dim is padded by 128 bits when it is a multiple of
+    256 bits (matching the GEMM padded-layout rule).
+
+    Args:
+        buffer_or_load_or_region: BufferLikeType
+
+    Returns:
+        Layout: A padded row-major linear layout
+    """
+    _, shape, _ = _get_buffer_info(buffer_or_load_or_region)
+    element_size = _get_element_size(buffer_or_load_or_region)
+    return _ffi_api.make_linear_layout_padded(list(shape), element_size)
+
+
 def make_gemm_fragment_8x8():
     """
     Create a standard 8x8 GEMM fragment layout for ldmatrix/stmatrix.
