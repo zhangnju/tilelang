@@ -1004,6 +1004,41 @@ def ds_bpermute(value, src_lane):
     return tirx.call_intrin("float32", tirx.op.Op.get("tl.ds_bpermute"), value, src_lane)
 
 
+def permlane32_swap_to(da, db, val):
+    """ROCm/gfx950 register-only swap of a wave's two 32-lane halves via
+    ``v_permlane32_swap_b32`` — NO LDS, NO barrier. Store-form: writes BOTH
+    outputs of the single instruction into locals ``da``/``db``.
+
+    For each (lane L<32, lane L+32) pair, ``da`` receives the LOW lane's ``val``
+    and ``db`` the HIGH lane's ``val`` (broadcast to both lanes of the pair) — so
+    lane L reads its partner's value in ``db`` and lane L+32 in ``da``. Lowers to
+    a pinned inline-asm sequence (``v_mov``×2 + ``s_nop 1`` + swap) that dodges
+    two gfx950 -O3 miscompiles of the ``__builtin_amdgcn_permlane32_swap``
+    struct-return (a v_mov->swap read hazard and a double-store of r[0]).
+
+    Used for the register-resident C-accumulator -> B-operand relayout on the
+    serial scan. fp32.
+
+    Args:
+        da: local ``Buffer``/``BufferRegion``/``BufferLoad`` receiving the low
+            lane's value.
+        db: local receiving the high lane's value.
+        val: this lane's fp32 value.
+
+    Example:
+        >>> T.permlane32_swap_to(lo[0], hi[0], s[0])
+    """
+    if not isinstance(da, BufferLikeTypeTuple):
+        raise TypeError(
+            f"T.permlane32_swap_to expects Buffer/BufferRegion/BufferLoad for da. Got {type(da)}: {da}")
+    if not isinstance(db, BufferLikeTypeTuple):
+        raise TypeError(
+            f"T.permlane32_swap_to expects Buffer/BufferRegion/BufferLoad for db. Got {type(db)}: {db}")
+    da_ptr = retrieve_ptr(da, access_type="w")
+    db_ptr = retrieve_ptr(db, access_type="w")
+    return tirx.call_intrin("handle", tirx.op.Op.get("tl.permlane32_swap_to"), da_ptr, db_ptr, val)
+
+
 def shfl_down(
     value: int | PrimExpr | tirx.Call,
     delta: int | PrimExpr | tirx.Call,

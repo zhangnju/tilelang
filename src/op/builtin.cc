@@ -563,6 +563,17 @@ TIR_DEFINE_TL_BUILTIN(ds_bpermute)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque));
 
+// AMD/gfx950 register-only swap of a wave's two 32-lane halves via
+// v_permlane32_swap_b32 (no LDS, no barrier). Store-form: writes BOTH outputs
+// of the single instruction into `da`/`db` — the two halves must be consumed
+// together (splitting drops the cross-lane result). Used by the
+// register-resident scan's C-accumulator -> B-operand relayout.
+// permlane32_swap_to(da_ptr, db_ptr, val) -> void
+TIR_DEFINE_TL_BUILTIN(permlane32_swap_to)
+    .set_num_inputs(3)
+    .set_attr<TCallEffectKind>("TCallEffectKind",
+                               Integer(CallEffectKind::kOpaque));
+
 TIR_DEFINE_TL_BUILTIN(shfl_down_sync)
     .set_num_inputs(4)
     .set_attr<TCallEffectKind>("TCallEffectKind",

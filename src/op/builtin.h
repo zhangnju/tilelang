@@ -975,6 +975,19 @@ TVM_DLL const Op &shfl_xor_sync();
 TVM_DLL const Op &ds_bpermute();
 
 /*!
+ * \brief AMD/gfx950 register-only swap of a wave's two 32-lane halves
+ * (ROCm only). Lowers to `v_permlane32_swap_b32` — NO LDS, NO barrier.
+ *
+ * void permlane32_swap_to(da_ptr, db_ptr, val)
+ *
+ * Store-form: writes the low-half lane's `val` to `*da` and the high-half
+ * lane's `val` to `*db`. Emitted as pinned inline asm (v_mov x2 + s_nop 1 +
+ * swap) to dodge two gfx950 -O3 miscompiles of the struct-return builtin. Used
+ * for the register-resident C-accumulator -> B-operand relayout on the scan.
+ */
+TVM_DLL const Op &permlane32_swap_to();
+
+/*!
  * \brief Warp shuffle (shift-down variant). Lowers to `__shfl_down_sync` on
  * CUDA and `__shfl_down` on HIP.
  *

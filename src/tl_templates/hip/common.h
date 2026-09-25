@@ -357,6 +357,33 @@ TL_DEVICE float ds_bpermute_f32(float val, int srcLane) {
   return __builtin_bit_cast(float, r);
 }
 
+// gfx950 register-only cross-lane swap of the two 32-lane halves of a wave in a
+// single v_permlane32_swap_b32 (NO LDS, NO barrier). Store-form: BOTH outputs of
+// the one instruction must be consumed together — splitting into two functions
+// that each take r[0] or r[1] makes the compiler drop the cross-lane half
+// (verified). So this writes both results at once. Semantics (LLVM builtin):
+// exchanges lanes 0-31's `b` with lanes 32-63's `a`; low half gets r[0]=a /
+// r[1]=(paired high lane's a), high half gets r[0]=(paired low lane's b) / r[1]=b.
+// `da`/`db` receive r[0]/r[1] respectively. Used by the register-resident scan's
+// C-accumulator -> B-operand relayout.
+// Inline asm, NOT __builtin_amdgcn_permlane32_swap: the builtin's struct return
+// hits two gfx950 miscompiles at -O3 — (1) a v_mov -> v_permlane32_swap read
+// hazard (the swap reads stale source when the producing v_mov is adjacent) and
+// (2) a double-store of only r[0]. The asm pins the instruction order and the
+// `s_nop 1` enforces the hazard gap; `=&v` early-clobber forces two distinct
+// output regs. Writes da = low-half lane's val, db = high-half lane's val.
+TL_DEVICE void permlane32_swap_to_f32(float *da, float *db, float val) {
+  float r0, r1;
+  asm volatile("v_mov_b32 %0, %2\n\t"
+               "v_mov_b32 %1, %2\n\t"
+               "s_nop 1\n\t"
+               "v_permlane32_swap_b32 %0, %1"
+               : "=&v"(r0), "=&v"(r1)
+               : "v"(val));
+  *da = r0;
+  *db = r1;
+}
+
 // specialize half_t
 template <> TL_DEVICE half_t shfl_xor(half_t val, int delta) {
   float f = static_cast<float>(val);

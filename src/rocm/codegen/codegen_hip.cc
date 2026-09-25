@@ -1676,6 +1676,9 @@ void CodeGenTileLangHIP::VisitExpr_(const CallNode *op, std::ostream &os) {
   } else if (op->op.same_as(tl::ds_bpermute())) {
     os << "tl::ds_bpermute_f32(" << PrintExpr(op->args[0]) << ", "
        << PrintExpr(op->args[1]) << ")";
+  } else if (op->op.same_as(tl::permlane32_swap_to())) {
+    os << "tl::permlane32_swap_to_f32(" << PrintExpr(op->args[0]) << ", "
+       << PrintExpr(op->args[1]) << ", " << PrintExpr(op->args[2]) << ")";
   } else if (op->op.same_as(tl::warp_reduce_sum())) {
     os << "tl::warp_reduce_sum(" << PrintExpr(op->args[0]) << ")";
   } else if (op->op.same_as(tl::warp_reduce_max())) {

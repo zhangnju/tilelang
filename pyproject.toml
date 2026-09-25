@@ -30,13 +30,10 @@ dependencies = [
     "apache-tvm-ffi>=0.1.11,<0.1.12",
     # torch-c-dlpack-ext provides prebuilt torch extensions.
     # Without it, TVM FFI may require JIT compilation on first import.
-    "torch-c-dlpack-ext; python_version < '3.14'",
     "cloudpickle",
     "ml-dtypes",
     "numpy>=1.23.5",
     "psutil",
-    "torch",
-    "torch>=2.4; platform_system == 'Darwin'",
     # jit-compiling a torch extension needs setuptools
     "setuptools; platform_system == 'Darwin'",
     "tqdm>=4.62.3",
@@ -52,7 +49,6 @@ fp4 = ["ml-dtypes>=0.5.1"]
 vis = ["matplotlib"]
 # if you want to build with CUDA NVCC support
 nvcc = [
-    "torch",
     "nvidia-cuda-nvcc>=13.0.48",
     "nvidia-cuda-cccl>=13.0.50",
     # On Windows, ship nvrtc through the runtime deps so `pip install tilelang`
